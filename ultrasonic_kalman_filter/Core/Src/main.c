@@ -61,11 +61,13 @@ typedef struct {
 Ultrasonic_HandleTypeDef hus1;
 Kalman_HandleTypeDef hkf_zero, hkf_first, hkf_msd;
 
-const float M_KG = 0.324f;
+const float M_KG = 0.339f;
+//const float M_KG = 1e-9f;
 const float K_NM = 29.32750224f;
 const float C_NSM = 0.00002f;
-const float F_GRAVITY = 0;
-//const float F_GRAVITY = 0.324f * 9.80665f; // Newtons
+//const float F_GRAVITY = 0.0f;
+//const float F_GRAVITY = 0.5f * 9.80665f; // Newtons
+const float F_GRAVITY = 0.339f * 9.80665f; // Newtons
 
 TelemetryFrame_t txFrame = { .header = 0xABCD, .footer = 0x7F };
 /* USER CODE END PV */
@@ -121,16 +123,19 @@ int main(void) {
 
 	// 2. Initialize all 3 Kalman Filter Models
 	// 2. Initialize all 3 Kalman Filter Models (Unit: Meters)
-	float p_start = 0.07f; // Initial position (m) - Testing transient response
+	// In main.c, around line 121
+	float p_start = 0.1134f; // Matches calculated static deflection (Mg/K)
 	float dt = 0.001f;     // 1000Hz sampling
 
-	float R   = 1e-3f; // Increase: We trust the sensor LESS
-	float Q_p = 1e-8f; // Decrease: We trust the physical/kinematic model MORE
-	float Q_v = 1e-7f;
+	// In main.c, around lines 124-126
+	float R = 9e-6f; // Standard for 3mm sensor resolution
+	float Q_p = 1e-6f; // Increase 100x to follow sensor faster
+	float Q_v = 1e-5f; // Increase 100x to allow velocity changes
+
 	// Adjusted R to 9e-6f to match 0.003m sensor resolution
-	Kalman_InitZeroOrder(&hkf_zero, p_start, Q_p,R);
+	Kalman_InitZeroOrder(&hkf_zero, p_start, Q_p, R);
 	Kalman_InitFirstOrder(&hkf_first, p_start, dt, Q_p, Q_v, R);
-	Kalman_InitMSD(&hkf_msd, p_start, dt, M_KG, C_NSM, K_NM, Q_p, Q_v,R);
+	Kalman_InitMSD(&hkf_msd, p_start, dt, M_KG, C_NSM, K_NM, Q_p, Q_v, R);
 
 	// 3. Start 1000Hz Timer Interrupt (Crucial)
 	if (HAL_TIM_Base_Start_IT(&htim4) != HAL_OK) {
