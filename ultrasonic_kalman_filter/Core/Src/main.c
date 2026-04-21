@@ -18,12 +18,15 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
+#include "usart.h"
 #include "tim.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "Ultrasonic.h"
+#include "kalman_filter.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +36,18 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#pragma pack(push, 1)
+typedef struct {
+	uint16_t header;       // 0xABCD (2 bytes)
+	float raw_pos;         // Measured z_k (4 bytes)
+	float kf_zero_pos;     // Zero-order x[0] (4 bytes)
+	float kf_first_pos;    // First-order x[0] (4 bytes)
+	float kf_first_vel;    // First-order x[1] (4 bytes)
+	float kf_msd_pos;      // MSD x[0] (4 bytes)
+	float kf_msd_vel;      // MSD x[1] (4 bytes)
+	uint8_t footer;        // 0x7F (1 byte)
+} TelemetryFrame_t;        // Total: 27 bytes
+#pragma pack(pop)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,6 +59,15 @@
 
 /* USER CODE BEGIN PV */
 Ultrasonic_HandleTypeDef hus1;
+Kalman_HandleTypeDef hkf_zero, hkf_first, hkf_msd;
+
+const float M_KG = 0.324f;
+const float K_NM = 29.32750224f;
+const float C_NSM = 0.00002f;
+const float F_GRAVITY = 0;
+//const float F_GRAVITY = 0.324f * 9.80665f; // Newtons
+
+TelemetryFrame_t txFrame = { .header = 0xABCD, .footer = 0x7F };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -86,18 +109,33 @@ int main(void) {
 
 	/* Initialize all configured peripherals */
 	MX_GPIO_Init();
+	MX_DMA_Init();
 	MX_TIM1_Init();
 	MX_TIM3_Init();
 	MX_TIM4_Init();
+	MX_LPUART1_UART_Init();
 	/* USER CODE BEGIN 2 */
 	// 1. Initialize Library Handles
 	Ultrasonic_Init(&hus1, &htim3, TIM_CHANNEL_1, &htim1, TIM_CHANNEL_1);
-
-	// 2. Start hardware autonomous measurement
 	Ultrasonic_StartAutonomous(&hus1);
 
-	// 3. Start 100Hz Control Loop Timer for Kalman Filter
-	HAL_TIM_Base_Start_IT(&htim4);
+	// 2. Initialize all 3 Kalman Filter Models
+	// 2. Initialize all 3 Kalman Filter Models (Unit: Meters)
+	float p_start = 0.07f; // Initial position (m) - Testing transient response
+	float dt = 0.001f;     // 1000Hz sampling
+
+	float R   = 1e-3f; // Increase: We trust the sensor LESS
+	float Q_p = 1e-8f; // Decrease: We trust the physical/kinematic model MORE
+	float Q_v = 1e-7f;
+	// Adjusted R to 9e-6f to match 0.003m sensor resolution
+	Kalman_InitZeroOrder(&hkf_zero, p_start, Q_p,R);
+	Kalman_InitFirstOrder(&hkf_first, p_start, dt, Q_p, Q_v, R);
+	Kalman_InitMSD(&hkf_msd, p_start, dt, M_KG, C_NSM, K_NM, Q_p, Q_v,R);
+
+	// 3. Start 1000Hz Timer Interrupt (Crucial)
+	if (HAL_TIM_Base_Start_IT(&htim4) != HAL_OK) {
+		Error_Handler();
+	}
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -154,9 +192,26 @@ void SystemClock_Config(void) {
 
 /* USER CODE BEGIN 4 */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-	if (htim->Instance == TIM4) // 100 Hz Control Loop
-	{
-		// Execute Kalman Filter predict/update here using hus1.distance_cm
+	if (htim->Instance == TIM4) {
+		// 1. SI Unit Conversion (mm to m)
+		float z = hus1.distance_mm * 0.001f;
+
+		// 2. State Propagation and Update
+		// Note: Kalman_Update returns x[0], but internal state x[1] is also updated
+		float z_zero = Kalman_Update(&hkf_zero, 0.0f, z);
+		float z_first = Kalman_Update(&hkf_first, 0.0f, z);
+		float z_msd = Kalman_Update(&hkf_msd, F_GRAVITY, z);
+
+		// 3. Mapping Variables to Telemetry Frame
+		txFrame.raw_pos = z;
+		txFrame.kf_zero_pos = z_zero;
+		txFrame.kf_first_pos = z_first;
+		txFrame.kf_first_vel = hkf_first.x[1]; // Velocity State (m/s)
+		txFrame.kf_msd_pos = z_msd;
+		txFrame.kf_msd_vel = hkf_msd.x[1];   // Velocity State (m/s)
+
+		// 4. Non-Blocking Transmission
+		HAL_UART_Transmit_DMA(&hlpuart1, (uint8_t*) &txFrame, sizeof(txFrame));
 	}
 }
 

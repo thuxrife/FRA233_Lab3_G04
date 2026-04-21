@@ -30,7 +30,9 @@ void Ultrasonic_CaptureCallback(Ultrasonic_HandleTypeDef *hus,
 
 			if (hus->diff > 0) {
 				// Conversion factor: 1/58 cm/us
+				hus->distance_mm = ((float) hus->diff / 58.0f) * 10.0f;
 				hus->distance_cm = (float) hus->diff / 58.0f;
+				hus->distance_m = ((float) hus->diff / 58.0f) / 100.0f;
 			}
 		}
 	}

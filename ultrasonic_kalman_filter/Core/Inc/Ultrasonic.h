@@ -13,7 +13,9 @@ typedef struct {
 
 	// Measurement Data
 	volatile uint32_t diff;         // Pulse duration in microseconds
-	volatile float distance_cm;     // Calculated distance
+	volatile float distance_m;
+	volatile float distance_cm;
+	volatile float distance_mm;
 } Ultrasonic_HandleTypeDef;
 
 // Functional Prototypes
