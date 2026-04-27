@@ -199,7 +199,7 @@ void SystemClock_Config(void) {
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM4) {
 		// 1. SI Unit Conversion (mm to m)
-		float z = hus1.distance_mm * 0.001f;
+		float z = (hus1.distance_mm * 0.001f) - 0.105f;
 
 		// 2. State Propagation and Update
 		// Note: Kalman_Update returns x[0], but internal state x[1] is also updated
